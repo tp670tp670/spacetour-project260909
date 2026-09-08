@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>陳公館_360預覽</title> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"/>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+    <style>
+        html, body { width: 100%; height: 100%; overflow: hidden; margin: 0; padding: 0; background-color: #111; font-family: sans-serif; }
+        #viewer { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+        .pnlm-lginf { display: none !important; }
+        
+        /* 控制按鈕群組 */
+        .btn-group-left { position: absolute; top: 20px; left: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 99999 !important; }
+        .ui-btn { background: rgba(0, 0, 0, 0.6); color: #fff; border: 1px solid rgba(255, 255, 255, 0.2); padding: 10px 16px; font-size: 13px; border-radius: 20px; cursor: pointer; backdrop-filter: blur(8px); transition: all 0.3s ease; }
+        .ui-btn.active { background: #00bcd4; border-color: #00bcd4; box-shadow: 0 0 10px rgba(0, 188, 212, 0.6); }
+
+        #custom-link-btn { position: absolute; top: 20px; right: 20px; background: #00bcff; color: white; border: none; padding: 12px 24px; font-size: 14px; font-weight: bold; border-radius: 25px; cursor: pointer; box-shadow: 0 4px 15px rgba(0, 188, 255, 0.4); z-index: 99999 !important; transition: all 0.3s ease; text-decoration: none; display: none; align-items: center; justify-content: center; }
+        #custom-link-btn:hover { transform: scale(1.05); background: #009cd3; }
+
+        /* 下方動態導覽列容器 */
+        #nav-container { position: absolute; bottom: 25px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; background: rgba(0, 0, 0, 0.6); padding: 12px 20px; border-radius: 25px; backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.12); z-index: 99999 !important; width: 90%; max-width: 600px; box-sizing: border-box; }
+        .nav-row { display: flex; justify-content: center; align-items: center; gap: 12px; width: 100%; }
+        
+        .nav-item { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; flex: 1; min-width: 50px; }
+        .thumb-btn { width: 42px; height: 42px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.4); background-size: cover; background-position: center; transition: all 0.3s; }
+        .nav-item:hover .thumb-btn { transform: scale(1.1); border-color: #fff; }
+        .nav-item.active .thumb-btn { border-color: #00bcd4; transform: scale(1.1); box-shadow: 0 0 12px rgba(0, 188, 212, 0.8); }
+        .nav-item.active .thumb-label { color: #00bcd4; font-weight: bold; }
+        .thumb-label { color: rgba(255, 255, 255, 0.8); font-size: 11px; text-shadow: 0 1px 3px rgba(0,0,0,0.8); white-space: nowrap; text-align: center; overflow: hidden; text-overflow: ellipsis; width: 100%; }
+
+        @media (max-width: 480px) { #nav-container { bottom: 15px; width: 95%; padding: 8px 10px; border-radius: 16px; } .thumb-btn { width: 35px; height: 35px; } .thumb-label { font-size: 10px; } }
+    </style>
+</head>
+<body>
+
+    <div id="viewer"></div>
+    
+    <div id="control-bar" class="btn-group-left">
+        <button id="gyro-btn" class="ui-btn" onclick="toggleGyro()">🧭 陀螺儀關閉</button>
+        <button id="fullscreen-btn" class="ui-btn" onclick="toggleFullscreen()">🖥️ 全螢幕模式</button>
+    </div>
+
+    <a id="custom-link-btn" href="#">🛠️ 點此進入方案客製化</a>
+    
+    <div id="nav-container"></div>
+
+    <script>
+        var gyroEnabled = false;
+        var viewer;
+        var sceneConfigData = {};
+
+        // CSV 解析函數
+        function parseCSV(text) {
+            let lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+            let headers = lines[0].split(',');
+            let result = [];
+            for (let i = 1; i < lines.length; i++) {
+                let currentline = lines[i].split(',');
+                let obj = {};
+                for (let j = 0; j < headers.length; j++) {
+                    obj[headers[j]] = currentline[j] ? currentline[j].trim() : "";
+                }
+                result.push(obj);
+            }
+            return result;
+        }
+
+        // 讀取 config.csv
+        fetch('config.csv')
+            .then(response => response.text())
+            .then(csvText => {
+                let data = parseCSV(csvText);
+                if (data.length === 0) return;
+
+                // 1. 動態修改網頁標籤 Title
+                if (data[0].title) {
+                    document.title = data[0].title;
+                }
+
+                let pannellumScenes = {};
+                let container = document.getElementById('nav-container');
+                let firstSceneId = data[0].sceneId;
+
+                // 2. 智慧計算按鈕排版 (超過 6 張圖就分成兩排)
+                let row1 = document.createElement('div');
+                row1.className = 'nav-row';
+                let row2 = null;
+
+                let maxInRow = 6; // 超過 6 張啟動分排
+                let useTwoRows = data.length > maxInRow;
+                let halfCount = Math.ceil(data.length / 2); // 平均分配的交界點
+
+                if (useTwoRows) {
+                    row2 = document.createElement('div');
+                    row2.className = 'nav-row';
+                }
+
+                container.appendChild(row1);
+                if (row2) container.appendChild(row2);
+
+                // 3. 開始循環生成按鈕
+                data.forEach((row, index) => {
+                    sceneConfigData[row.sceneId] = row;
+
+                    pannellumScenes[row.sceneId] = {
+                        "type": "equirectangular",
+                        "panorama": row.panoramaImage
+                    };
+
+                    // 建立按鈕 HTML
+                    let navItem = document.createElement('div');
+                    navItem.className = `nav-item ${index === 0 ? 'active' : ''}`;
+                    navItem.id = `nav-${row.sceneId}`;
+                    navItem.onclick = function() { switchScene(row.sceneId); };
+                    navItem.innerHTML = `
+                        <div class="thumb-btn" style="background-image: url('${row.panoramaImage}');"></div>
+                        <div class="thumb-label">${row.sceneName}</div>
+                    `;
+
+                    // 決定放第一排還是第二排
+                    if (useTwoRows && index >= halfCount) {
+                        row2.appendChild(navItem);
+                    } else {
+                        row1.appendChild(navItem);
+                    }
+                });
+
+                // 初始化全景
+                viewer = pannellum.viewer('viewer', {
+                    "default": { "firstScene": firstSceneId, "autoLoad": true, "showControls": false, "autoRotate": -0.5, "hfov": 65 },
+                    "scenes": pannellumScenes
+                });
+
+                switchScene(firstSceneId, true);
+            })
+            .catch(err => console.error("讀取 config.csv 失敗，請檢查檔案是否存在與格式:", err));
+
+        // 切換空間與檢查客製化按鈕
+        function switchScene(sceneId, isInit = false) {
+            if (!isInit) viewer.loadScene(sceneId);
+
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+            let activeNav = document.getElementById(`nav-${sceneId}`);
+            if (activeNav) activeNav.classList.add('active');
+            
+            let linkBtn = document.getElementById('custom-link-btn');
+            let currentData = sceneConfigData[sceneId];
+
+            // 判斷是否有客製化頁面
+            if (currentData && currentData.hasCustom === "1" && currentData.customPage) {
+                linkBtn.style.display = 'flex';
+                linkBtn.href = currentData.customPage; // 自動連結到 Excel 寫好的對應網頁
+            } else {
+                linkBtn.style.display = 'none';
+            }
+            
+            setTimeout(function() { if (gyroEnabled && viewer) viewer.startOrientation(); }, 100);
+        }
+
+        // 陀螺儀
+        function toggleGyro() {
+            var btn = document.getElementById('gyro-btn');
+            if (!gyroEnabled) {
+                viewer.startOrientation(); gyroEnabled = true; btn.classList.add('active'); btn.innerText = "🧭 陀螺儀開啟";
+            } else {
+                viewer.stopOrientation(); gyroEnabled = false; btn.classList.remove('active'); btn.innerText = "🧭 陀螺儀關閉";
+            }
+        }
+
+        // 全螢幕
+        function toggleFullscreen() {
+            var btn = document.getElementById('fullscreen-btn');
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen(); }
+                else if (document.documentElement.webkitRequestFullscreen) { document.documentElement.webkitRequestFullscreen(); }
+                btn.innerText = "🖥️ 退出全螢幕"; btn.classList.add('active');
+            } else {
+                if (document.exitFullscreen) { document.exitFullscreen(); }
+                else if (document.webkitExitFullscreen) { document.webkitRequestFullscreen(); }
+                btn.innerText = "🖥️ 全螢幕模式"; btn.classList.remove('active');
+            }
+        }
+        document.addEventListener('fullscreenchange', handleFsChange);
+        document.addEventListener('webkitfullscreenchange', handleFsChange);
+        function handleFsChange() {
+            var btn = document.getElementById('fullscreen-btn');
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                btn.innerText = "🖥️ 全螢幕模式"; btn.classList.remove('active');
+            }
+        }
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (isMobile) {
+        document.getElementById('fullscreen-btn').style.display = 'none';
+        } else {
+        document.getElementById('gyro-btn').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
